@@ -58,6 +58,20 @@ _smscmd_write() {
     } > "$_SMSCMD_CONF_PATH"
 }
 
+# ── internal: emit ok:true+out on rc 0, ok:false+out on failure ───────────────
+# Core fns (prof_*) print a JSON object and set exit code; on failure they print
+# {"err":".."} and return non-zero. j_ok alone would wrongly emit ok:true. j_rc
+# respects the exit code: $1=rc, $2=fn output. jq `+` lets the left {ok:..} set
+# the flag while preserving the err field from the fn output.
+j_rc() {
+    if [ "$1" -eq 0 ] 2>/dev/null; then
+        j_ok "$2"
+    else
+        "$JQ" -nc --argjson d "${2:-$_DCP_EMPTYOBJ}" '{ok:false} + $d' 2>/dev/null \
+            || j_err "işlem başarısız"
+    fi
+}
+
 case "$VERB" in
   # ── cell / modem ──────────────────────────────────────────────────────────
   status)          j_ok "$(sys_status_json)";;
@@ -138,11 +152,11 @@ case "$VERB" in
     ;;
 
   # ── profiles ──────────────────────────────────────────────────────────────
-  prof_switch)     j_ok "$(prof_switch "$ARG")";;
+  prof_switch)     _o=$(prof_switch "$ARG"); j_rc $? "$_o";;
   prof_list)       j_ok "$(prof_list_json)";;
-  prof_import_link) j_ok "$(prof_import_link "$ARG")";;
-  prof_import)     j_ok "$(prof_import_link "$ARG")";;
-  prof_import_sub) j_ok "$(prof_import_sub "$ARG")";;
+  prof_import_link) _o=$(prof_import_link "$ARG"); j_rc $? "$_o";;
+  prof_import)     _o=$(prof_import_link "$ARG"); j_rc $? "$_o";;
+  prof_import_sub) _o=$(prof_import_sub "$ARG"); j_rc $? "$_o";;
 
   # ── xray engine ───────────────────────────────────────────────────────────
   xray_start)      xray_start && j_ok '{}' || j_err "xray_start başarısız";;
@@ -168,7 +182,7 @@ case "$VERB" in
   bypass_del)      bypass_del "$ARG" && j_ok "{}" || j_err "bypass_del $ARG başarısız";;
 
   # ── tproxy dry-run ────────────────────────────────────────────────────────
-  tproxy_dryrun)   DRYRUN=1 route_apply tproxy;;
+  tproxy_dryrun)   _o=$(DRYRUN=1 route_apply tproxy 2>&1); "$JQ" -nc --arg rules "$_o" '{ok:true,dryrun:$rules}';;
 
   # ── adblock ───────────────────────────────────────────────────────────────
   adblock_status)
