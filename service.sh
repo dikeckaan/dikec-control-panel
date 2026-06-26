@@ -25,3 +25,18 @@ LOG="$DATA/logs/bot.log" supervisor_loop "$MODDIR/bot/bot.sh" 15
 if [ "$(cat "$DATA/conf/xray_enabled" 2>/dev/null)" = "1" ]; then
     "$MODDIR/lib/action.sh" xray_start >> "$DATA/logs/service.log" 2>&1
 fi
+
+# adblock: kullanıcı açık bıraktıysa boot'ta geri aç (on/off kararı kalıcı olsun)
+if [ "$(cat "$DATA/conf/adblock_enabled" 2>/dev/null)" = "1" ]; then
+    "$MODDIR/lib/action.sh" adblock_enable >> "$DATA/logs/service.log" 2>&1
+fi
+
+# Kullanıcının panel/bot'tan DURDURDUĞU entegrasyonlar (tor/ssh/tailscale) boot'ta
+# kendi modüllerince tekrar başlatılır; kullanıcının "durdur" kararı kalıcı olsun
+# diye, diğer modüller başladıktan ~40 sn sonra flag'li olanları tekrar durdur.
+(
+    sleep 40
+    . "$MODDIR/lib/core/env.sh" 2>/dev/null
+    . "$MODDIR/lib/core/integrations.sh" 2>/dev/null
+    intg_enforce_off >> "$DATA/logs/service.log" 2>&1
+) &

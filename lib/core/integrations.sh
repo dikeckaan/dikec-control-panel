@@ -16,6 +16,16 @@ _INTEGRATIONS_SH_LOADED=1
     . "$_d/lib/core/env.sh"
 }
 
+# ── desired-state flags ───────────────────────────────────────────────────────
+# When the user STOPS a service via the panel/bot, we remember it so the
+# decision survives a reboot. The underlying module's own service.sh restarts
+# the service at boot; intg_enforce_off() (called from our service.sh) then
+# stops anything the user flagged off. Flag file: /data/dikec/conf/intg_<svc>_off
+_intg_off_file() { printf '%s/conf/intg_%s_off' "${DCP_DATA:-/data/dikec}" "$1"; }
+_intg_off_set()  { mkdir -p "${DCP_DATA:-/data/dikec}/conf"; : > "$(_intg_off_file "$1")"; }
+_intg_off_clear(){ rm -f "$(_intg_off_file "$1")" 2>/dev/null; }
+_intg_is_off()   { [ -f "$(_intg_off_file "$1")" ]; }
+
 # ── tailscale-control ─────────────────────────────────────────────────────────
 _INTG_TS_MOD=/data/adb/modules/tailscale-control
 _INTG_TS_BIN="${_INTG_TS_MOD}/system/bin/tailscale"
@@ -67,6 +77,7 @@ intg_tailscale() {
             ;;
 
         up)
+            _intg_off_clear tailscale
             local _ts_bin _tsd_bin
             _ts_bin=$(_ts_find_bin tailscale)   || {
                 "$JQ" -nc '{installed:true,ok:false,err:"tailscale binary not found"}'
@@ -150,6 +161,7 @@ intg_tailscale() {
             ;;
 
         down)
+            _intg_off_set tailscale   # remember: keep it down (survives reboot)
             if ! _ts_daemon_running; then
                 "$JQ" -nc \
                     '{installed:true,ok:true,running:false,msg:"daemon not running"}'
@@ -229,6 +241,7 @@ intg_tor() {
             ;;
 
         start)
+            _intg_off_clear tor   # user wants it on
             local _pid
             _pid=$(pgrep -f "$_INTG_TOR_BIN" 2>/dev/null | head -1 || printf '')
             if [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null; then
@@ -267,6 +280,7 @@ intg_tor() {
             ;;
 
         stop)
+            _intg_off_set tor   # remember: keep it stopped (survives reboot)
             # Kill tor binary and any service.sh supervisor (prevents auto-restart)
             pkill -f "${_INTG_TOR_BIN}" 2>/dev/null
             pkill -f "${_INTG_TOR_MOD}/service.sh" 2>/dev/null
@@ -328,6 +342,7 @@ intg_ssh() {
             ;;
 
         start)
+            _intg_off_clear ssh
             if pgrep -x dropbear >/dev/null 2>&1; then
                 # Already running — return current status
                 local _port=""
@@ -375,6 +390,7 @@ intg_ssh() {
             ;;
 
         stop)
+            _intg_off_set ssh   # remember: keep it stopped (survives reboot)
             # Kill service.sh supervisor first (prevents auto-restart in 5 s),
             # then terminate dropbear via pidfile + pgrep fallback.
             pkill -f "${_INTG_SSH_MOD}/service.sh" 2>/dev/null
@@ -395,4 +411,15 @@ intg_ssh() {
                 '{installed:true, ok:false, err:"unknown ssh sub-command"}'
             ;;
     esac
+}
+
+# ── intg_enforce_off ──────────────────────────────────────────────────────────
+# Called from service.sh at boot (after a short delay, so the underlying modules
+# have already started their services). Re-stops anything the user flagged off
+# via the panel/bot, so a "stop" decision survives reboot. Idempotent.
+intg_enforce_off() {
+    _intg_is_off tor       && intg_tor       stop >/dev/null 2>&1
+    _intg_is_off ssh       && intg_ssh       stop >/dev/null 2>&1
+    _intg_is_off tailscale && intg_tailscale down >/dev/null 2>&1
+    return 0
 }
