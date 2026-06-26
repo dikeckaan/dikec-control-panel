@@ -38,5 +38,20 @@ else
     printf '[start-httpd] localhost mode: binding 127.0.0.1:8088\n'
 fi
 
+# Pre-bind cleanup: drop any STALE httpd still holding :8088 before we bind.
+# Without this, a rapid restart (config change / supervisor respawn) hits
+# "bind: Address in use", the new httpd exits rc=1, and the supervisor waits
+# ~15 s before retrying — a brief window where the panel is unreachable. We
+# match the actual httpd process by cmdline and never kill ourselves ($$).
+for _p in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
+    [ "$_p" = "$$" ] && continue
+    _cl=$(tr '\0' ' ' < "/proc/$_p/cmdline" 2>/dev/null)
+    case "$_cl" in
+        *"$BB httpd "*8088*|*"busybox httpd "*8088*) kill "$_p" 2>/dev/null ;;
+    esac
+done
+# brief wait for the socket to be released
+sleep 1
+
 # -f: foreground (supervisor_loop / caller manages the process lifecycle)
 exec "$BB" httpd -f -p "$BIND" -h "$DCP/www" -c "$RUNTIME_CONF"
