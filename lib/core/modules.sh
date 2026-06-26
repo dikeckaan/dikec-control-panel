@@ -127,7 +127,10 @@ mod_install_catalog() {
         *.json) zipurl=$("$CURL" -fsSL --cacert "$CA" --max-time 20 "$uj" 2>/dev/null | "$JQ" -r '.zipUrl // empty' 2>/dev/null) ;;
     esac
     [ -n "$zipurl" ] || { "$JQ" -nc '{err:"no-zip-url"}'; return 1; }
-    local tmp="/data/local/tmp/.modinstall.$$.zip"
+    # mktemp avoids the predictable $$ name (TOCTOU/symlink race in shared tmp)
+    local tmp
+    tmp=$(mktemp /data/local/tmp/modinstall.XXXXXX 2>/dev/null) || tmp="/data/local/tmp/.modinstall.$$.tmp"
+    mv "$tmp" "$tmp.zip" 2>/dev/null && tmp="$tmp.zip"
     "$CURL" -fsSL --cacert "$CA" --max-time 120 -o "$tmp" "$zipurl" 2>/dev/null \
         || { rm -f "$tmp"; "$JQ" -nc '{err:"download-failed"}'; return 1; }
     mod_install_zip "$tmp"
@@ -139,9 +142,17 @@ mod_install_catalog() {
 # ── install an arbitrary module zip ───────────────────────────────────────────
 mod_install_zip() {
     local zip="$1"
-    # path guard: only allow staged uploads / our temp files
+    # path guard: only allow staged uploads under /data/local/tmp. A bare glob
+    # check is bypassable because shell `case` * also matches '/', so resolve the
+    # real path (defeats ../ traversal + symlinks) and re-check it.
     case "$zip" in
-        /data/local/tmp/*.zip) ;;
+        *..*|*//*|*'
+'*) "$JQ" -nc '{err:"invalid-zip-path"}'; return 1 ;;
+    esac
+    local real
+    real=$(readlink -f -- "$zip" 2>/dev/null) || { "$JQ" -nc '{err:"invalid-zip-path"}'; return 1; }
+    case "$real" in
+        /data/local/tmp/*.zip) zip="$real" ;;
         *) "$JQ" -nc '{err:"invalid-zip-path"}'; return 1 ;;
     esac
     [ -s "$zip" ] || { "$JQ" -nc '{err:"zip-missing"}'; return 1; }
