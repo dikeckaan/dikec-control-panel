@@ -1,0 +1,4 @@
+system/bin/xray               binary
+system/bin/hev-socks5-tunnel  binary
+xray/assets/*.dat             binary
+*.zip                         binary
