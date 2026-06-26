@@ -14,7 +14,8 @@ at_raw(){
 
 # at_signal_json → {"csq":N,"rssi_dbm":N,"rsrp":"N","rsrq":"N"}
 # AT+CSQ  → +CSQ: <rssi>,<ber>
-# AT+CESQ → +CESQ: <rxlev>,<ber>,<rscp>,<ecno>,<rsrp_idx>,<rsrq_idx>[,...]
+# AT+CESQ → +CESQ: <rxlev>,<ber>,<rscp>,<ecno>,<rsrq_idx>,<rsrp_idx>[,...]
+# (3GPP sırası: rsrq alan 5, rsrp alan 6 — TAKASLAMA)
 at_signal_json(){
     csq=$(at_raw 'AT+CSQ' | sed -nE 's/.*\+CSQ: ([0-9]+).*/\1/p')
     # RSSI dBm: CSQ*2 - 113; CSQ=99 means unknown
