@@ -1,15 +1,73 @@
-name: Auto Release
+name: Build & Release
 
+# Bir release şu durumlarda üretilir:
+#   - module.prop değiştiğinde (sürüm yükseltmesi) main'e push
+#   - Actions sekmesinden manuel (workflow_dispatch)
 on:
   push:
     branches: [main]
     paths:
       - 'module.prop'
+      - '.github/workflows/release.yml'
   workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
-    uses: dikeckaan/f50-magisk-modules/.github/workflows/release-module.yml@main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Sürüm bilgisini oku
+        id: ver
+        run: |
+          VERSION=$(sed -n 's/^version=//p' module.prop | head -1 | tr -d '\r')
+          VCODE=$(sed -n 's/^versionCode=//p' module.prop | head -1 | tr -d '\r')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "vcode=$VCODE"     >> "$GITHUB_OUTPUT"
+          echo "Sürüm: $VERSION (code $VCODE)"
+
+      - name: Modül zip'ini build et
+        run: |
+          chmod +x tools/build-zip.sh
+          bash tools/build-zip.sh
+          ls -lh dist/
+
+      - name: update.json'u senkronla (zipUrl + sha256) ve commit'le
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          VCODE="${{ steps.ver.outputs.vcode }}"
+          ZIP=$(ls dist/dikec-control-panel-*.zip | head -1)
+          SHA=$(sha256sum "$ZIP" | awk '{print $1}')
+          URL="https://github.com/${{ github.repository }}/releases/download/${VER}/$(basename "$ZIP")"
+          jq -n --arg v "$VER" --argjson vc "${VCODE:-1}" --arg u "$URL" --arg s "$SHA" \
+            --arg c "https://raw.githubusercontent.com/${{ github.repository }}/main/CHANGELOG.md" \
+            '{version:$v, versionCode:$vc, zipUrl:$u, changelog:$c, sha256:$s}' > update.json
+          if ! git diff --quiet update.json; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add update.json
+            git commit -m "ci: update.json senkronla ($VER, sha256)"
+            git push
+          fi
+
+      - name: Release oluştur / güncelle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          ZIP=$(ls dist/dikec-control-panel-*.zip | head -1)
+          NOTES="Dikec Control Panel ${VER} — otomatik build. Kurulum: zip'i Magisk -> Modules -> Install from storage ile flash et (gereksinim: bin-utils). Detay: README."
+          if gh release view "$VER" >/dev/null 2>&1; then
+            gh release upload "$VER" "$ZIP" --clobber
+            gh release edit   "$VER" --notes "$NOTES"
+          else
+            gh release create "$VER" "$ZIP" --title "Dikec Control Panel $VER" --notes "$NOTES"
+          fi
