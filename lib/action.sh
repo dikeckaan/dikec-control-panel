@@ -12,6 +12,7 @@
 #   action.sh adblock_status | adblock_enable | adblock_disable | adblock_update
 #   action.sh tailscale <sub> | tor <sub> | ssh <sub>
 #   action.sh notify_test   (wired but NOT invoked automatically — sends real Telegram msg)
+#   action.sh update_check | update_apply
 
 D="${0%/lib/action.sh}"; [ -d "$D/lib" ] || D=/data/adb/modules/dikec-control-panel
 . "$D/lib/core/env.sh"
@@ -24,6 +25,7 @@ D="${0%/lib/action.sh}"; [ -d "$D/lib" ] || D=/data/adb/modules/dikec-control-pa
 . "$D/lib/core/adblock.sh"
 . "$D/lib/core/notify.sh"
 . "$D/lib/core/integrations.sh"
+. "$D/lib/core/update.sh"
 
 VERB="${1:-}"; ARG="${2:-}"; ARG2="${3:-}"
 
@@ -212,6 +214,10 @@ case "$VERB" in
     # 2 s delay so the HTTP response is transmitted before the device reboots
     (sleep 2 && /system/bin/reboot) &
     ;;
+
+  # ── self-update ───────────────────────────────────────────────────────────
+  update_check)    update_check;;
+  update_apply)    update_apply;;
 
   # ── notify_test — send a real Telegram message (do NOT invoke in CI) ──────
   notify_test)
