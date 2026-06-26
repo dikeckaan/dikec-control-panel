@@ -30,13 +30,15 @@ _pa_rand() {
 }
 
 # ── internal: iterated sha256 password hash → hex ─────────────────────────────
-# A single sha256 has no work factor (fast offline brute force). This device has
-# no argon2/bcrypt/openssl/cryptpw, and busybox httpd -m's salt is non-
-# deterministic (can't verify). So we add a work factor by iterating sha256
-# PA_HASH_ROUNDS times (≈1.7s on this hardware). The salt is folded into every
-# round. panel_auth is root-only (mode 600); this is defence-in-depth for the
-# case the hash leaks without full root.
-PA_HASH_ROUNDS=2000
+# A single sha256 has no work factor. This device has no argon2/bcrypt/openssl/
+# cryptpw, and busybox httpd -m's salt is non-deterministic (can't verify), so
+# the only option is iterating sha256. Each round is a sha256sum FORK, and fork
+# latency on this low-end CPU swings hugely with system load (~0.85ms idle →
+# ~11ms loaded). A high round count therefore made login take 2–20s. panel_auth
+# is root-only (mode 600) — the file permission is the primary defence; the hash
+# work factor is secondary. So we keep a SMALL iteration: a real work factor
+# over single-shot, but a snappy login (≈0.05s idle, ≈0.3s under heavy load).
+PA_HASH_ROUNDS=20
 _pa_hash() {
     # $1 = salt, $2 = password
     local h i=0
@@ -78,9 +80,11 @@ pa_must_change() {
 pa_verify() {
     pa_seed_default
     local in_user="$1" in_pass="$2" u salt ph
-    u=$(   . "$PA_FILE" 2>/dev/null; printf '%s' "$USER" )
-    salt=$(. "$PA_FILE" 2>/dev/null; printf '%s' "$SALT" )
-    ph=$(  . "$PA_FILE" 2>/dev/null; printf '%s' "$PASS_HASH" )
+    # read all three fields in ONE subshell (fork cost matters on this CPU).
+    # No eval — values go through `read` so a custom username can't inject.
+    { read -r u; read -r salt; read -r ph; } <<EOF
+$(. "$PA_FILE" 2>/dev/null; printf '%s\n%s\n%s\n' "$USER" "$SALT" "$PASS_HASH")
+EOF
     [ "$in_user" = "$u" ] || return 1
     [ -n "$ph" ] || return 1
     [ "$(_pa_hash "$salt" "$in_pass")" = "$ph" ] || return 1
