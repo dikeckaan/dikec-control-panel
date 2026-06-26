@@ -1,7 +1,7 @@
 id=dikec-control-panel
 name=Dikec Control Panel
-version=v0.2.3
-versionCode=5
+version=v0.2.4
+versionCode=6
 author=dikeckaan
 description=F50 icin xray binary tabanli kontrol paneli: web + Telegram bot + SMS merkezi, tek ortak backend. statusbot'u icerir, AdGuard Home yerine hafif dnsmasq adblock. bin-utils gerektirir.
 updateJson=https://raw.githubusercontent.com/dikeckaan/dikec-control-panel/main/update.json

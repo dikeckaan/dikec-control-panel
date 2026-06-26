@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.2.4
+- **Katalogdan modül kurulumu düzeltildi** — katalog `update_json` (snake_case) alanını kullanıyor, kod `updateJson` arıyordu → kurulum başarısız oluyordu. Artık 18 katalog modülü de kurulabiliyor.
+
+
 ## v0.2.3
 - **LAN erişimi artık varsayılan AÇIK** — sıfır kurulumda hotspot'a bağlı cihazlardan http://<gateway-ip>:8088 ile adb forward gerekmeden erişilir (login korur). System sekmesinden kapatılabilir (yalnızca localhost). panel_lan değişince httpd otomatik yeniden başlar.
 

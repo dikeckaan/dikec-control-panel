@@ -119,7 +119,8 @@ mod_install_catalog() {
     local cache; cache=$(_mod_catalog_fetch)
     [ -n "$cache" ] || { "$JQ" -nc '{err:"catalog-unavailable"}'; return 1; }
     local uj
-    uj=$("$JQ" -r --arg id "$1" '((.modules // .)[] | select(.id==$id) | .updateJson // .zipUrl) // empty' "$cache" 2>/dev/null | head -1)
+    # the catalog uses snake_case `update_json` — accept it + camelCase + zipUrl
+    uj=$("$JQ" -r --arg id "$1" '((.modules // .)[] | select(.id==$id) | .update_json // .updateJson // .zip_url // .zipUrl) // empty' "$cache" 2>/dev/null | head -1)
     [ -n "$uj" ] || { "$JQ" -nc '{err:"not-in-catalog"}'; return 1; }
     # resolve a zip url: updateJson points to a json with zipUrl, else uj IS the zip
     local zipurl="$uj"
