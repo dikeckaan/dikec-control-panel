@@ -32,7 +32,9 @@ if [ "$LAN_EXPOSE" = "1" ] && [ -n "$PANEL_TOKEN" ]; then
     # Use MD5-crypt hash so the plaintext token isn't stored in the conf file.
     _HASH=$("$BB" httpd -m "$PANEL_TOKEN" 2>/dev/null)
     _PASS="${_HASH:-$PANEL_TOKEN}"        # fall back to plaintext if -m fails
-    printf 'A:/:dikec:%s\n' "$_PASS" >> "$RUNTIME_CONF"
+    # busybox httpd.conf basic-auth realm format is  /path:user:pass
+    # (NOT  A:...  — that prefix means an Allow-IP rule and would 403 everything).
+    printf '/:dikec:%s\n' "$_PASS" >> "$RUNTIME_CONF"
     printf '[start-httpd] LAN mode: binding 0.0.0.0:8088 with basic-auth\n'
 else
     BIND="127.0.0.1:8088"
