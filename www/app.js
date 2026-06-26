@@ -20,14 +20,16 @@
   var _pollT       = null;
   var activeTab    = 'dash';
 
-  var TABS = ['dash', 'xray', 'sms', 'cellular', 'clients', 'integrations', 'system'];
+  var TABS = ['dash', 'xray', 'sms', 'cellular', 'clients', 'integrations', 'modules', 'system'];
   var BOT_TABS = ['dash', 'xray', 'sms', 'clients']; // in bottom nav
-  var MORE_TABS = ['cellular', 'integrations', 'system'];
+  var MORE_TABS = ['cellular', 'integrations', 'modules', 'system'];
   var TAB_LABELS = {
     dash: 'Dashboard', xray: 'Xray', sms: 'SMS',
     cellular: 'Cellular', clients: 'Clients',
-    integrations: 'Integrations', system: 'System'
+    integrations: 'Integrations', modules: 'Modules', system: 'System'
   };
+
+  var PROTECTED_MODS = ['dikec-control-panel', 'bin-utils'];
 
   /* ── API helpers ─────────────────────────────────────────────────────────── */
   function _fetchJson(url, opts) {
@@ -346,6 +348,7 @@
       case 'cellular':     loadCellular();     break;
       case 'clients':      loadClients();      break;
       case 'integrations': loadIntegrations(); break;
+      case 'modules':      loadModules();      break;
       case 'system':       loadSystem();       break;
     }
   }
@@ -385,6 +388,7 @@
     buildCellular();
     buildClients();
     buildIntegrations();
+    buildModules();
     buildSystem();
 
     // Wire sidebar nav items
@@ -1258,6 +1262,325 @@
     }
     // Re-fetch status for this integration
     loadIntgStatus(name, prefix);
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+   * MODULES
+   * ═════════════════════════════════════════════════════════════════════════ */
+  function buildModules() {
+    document.getElementById('view-modules').innerHTML = [
+      '<div id="mod-reboot-banner" class="mod-reboot-banner hidden">',
+        '<span>Değişiklikler reboot sonrası uygulanır</span>',
+        '<span class="spacer"></span>',
+        '<button class="btn warn sm" id="mod-reboot-btn">&#9889; Reboot</button>',
+      '</div>',
+      '<div class="card">',
+        '<h3>Kurulu Modüller <span class="spacer"></span>',
+          '<button class="btn ghost sm" id="modlist-refresh">&#8635; Refresh</button>',
+        '</h3>',
+        '<div id="mod-list"></div>',
+      '</div>',
+      '<div class="card">',
+        '<h3>Katalog <span id="mod-catalog-pill" class="pill hidden">çevrimdışı</span></h3>',
+        '<div id="mod-catalog"></div>',
+      '</div>',
+      '<div class="card">',
+        '<h3>Zip\'den Kur</h3>',
+        '<div class="row" style="align-items:center;gap:10px;flex-wrap:wrap">',
+          '<input type="file" id="mod-zip-input" accept=".zip" style="flex:1;min-width:160px">',
+          '<button class="btn primary sm" id="mod-zip-btn">&#8679; Yükle &amp; Kur</button>',
+        '</div>',
+        '<p class="hint">Magisk modülü zip dosyasını seçin. Kurulum sonrası reboot gereklidir.</p>',
+        '<div id="mod-zip-status" class="hint hidden"></div>',
+      '</div>',
+    ].join('');
+
+    document.getElementById('modlist-refresh').addEventListener('click', loadModuleList);
+    document.getElementById('mod-reboot-btn').addEventListener('click', modReboot);
+    document.getElementById('mod-zip-btn').addEventListener('click', uploadModZip);
+  }
+
+  async function loadModules() {
+    await Promise.all([loadModuleList(), loadModuleCatalog()]);
+  }
+
+  function showRebootBanner() {
+    var b = document.getElementById('mod-reboot-banner');
+    if (b) b.classList.remove('hidden');
+  }
+
+  async function modReboot() {
+    if (!confirm('Cihazı yeniden başlat? Tüm bağlantılar kesilecek.')) return;
+    var r = await api('sys_reboot');
+    if (r && r.ok) {
+      toast('Yeniden başlatılıyor…', 'ok', 4000);
+    } else {
+      toast((r && r.err) || 'Reboot başarısız', 'err');
+    }
+  }
+
+  async function loadModuleList() {
+    var el = document.getElementById('mod-list');
+    if (!el) return;
+    el.textContent = '';
+    el.appendChild(mkEl('div', 'empty', 'Yükleniyor…'));
+
+    var r = await api('mod_list');
+    el.textContent = '';
+
+    if (!r || !r.ok) {
+      el.appendChild(mkEl('div', 'empty', (r && r.err) || 'Modül listesi alınamadı'));
+      return;
+    }
+
+    var mods = r.modules || [];
+    if (!mods.length) {
+      el.appendChild(mkEl('div', 'empty', 'Kurulu modül yok'));
+      return;
+    }
+
+    mods.forEach(function (m) {
+      var modId    = String(m.id      || '');
+      var modName  = String(m.name    || m.id || '?');
+      var modVer   = m.version ? String(m.version) : (m.versionCode ? String(m.versionCode) : '');
+      var enabled  = !!m.enabled;
+      var removing = !!m.removing;
+      var isProt   = PROTECTED_MODS.indexOf(modId) !== -1;
+
+      var row = mkEl('div', 'mod-row');
+
+      // ── Left: module info ──
+      var info = mkEl('div', 'mod-row-info');
+      var nameEl = mkEl('div', 'mod-row-name');
+      nameEl.textContent = modName;  // XSS-safe
+      var subEl = mkEl('div', 'mod-row-sub');
+      subEl.textContent = modId + (modVer ? ' · v' + modVer : '');  // XSS-safe
+      info.appendChild(nameEl);
+      info.appendChild(subEl);
+      row.appendChild(info);
+
+      // ── Right: actions ──
+      var acts = mkEl('div', 'mod-row-acts');
+
+      if (removing) {
+        acts.appendChild(mkEl('span', 'pill warn', "reboot'ta silinecek"));
+        var undoBtn = mkEl('button', 'btn sm ghost', 'Geri Al');
+        (function (mId) {
+          undoBtn.addEventListener('click', function () {
+            api('mod_unremove', mId).then(function (res) {
+              if (res && res.ok) {
+                toast(mId + ' kaldırma geri alındı', 'ok');
+              } else {
+                toast((res && res.err) || 'Hata', 'err');
+              }
+              loadModuleList();
+            });
+          });
+        }(modId));
+        acts.appendChild(undoBtn);
+
+      } else if (isProt) {
+        // Disabled toggle (greyed)
+        var tWrap = mkEl('label', 'toggle');
+        tWrap.style.opacity = '0.35';
+        tWrap.style.cursor  = 'not-allowed';
+        var tInp = document.createElement('input');
+        tInp.type    = 'checkbox';
+        tInp.checked = enabled;
+        tInp.disabled = true;
+        tWrap.appendChild(tInp);
+        tWrap.appendChild(mkEl('div', 'toggle-track'));
+        tWrap.appendChild(mkEl('div', 'toggle-thumb'));
+        acts.appendChild(tWrap);
+
+        var delBtnProt = mkEl('button', 'btn sm danger', 'Kaldır');
+        delBtnProt.disabled = true;
+        acts.appendChild(delBtnProt);
+
+        acts.appendChild(mkEl('span', 'pill', 'korumalı'));
+
+      } else {
+        // Normal module: toggle + remove
+        var nWrap = mkEl('label', 'toggle');
+        var nInp  = document.createElement('input');
+        nInp.type    = 'checkbox';
+        nInp.checked = enabled;
+        nWrap.appendChild(nInp);
+        nWrap.appendChild(mkEl('div', 'toggle-track'));
+        nWrap.appendChild(mkEl('div', 'toggle-thumb'));
+        (function (mId, wasEnabled, inp) {
+          inp.addEventListener('change', function () {
+            var verb = inp.checked ? 'mod_enable' : 'mod_disable';
+            inp.disabled = true;
+            api(verb, mId).then(function (res) {
+              inp.disabled = false;
+              if (res && res.ok) {
+                toast(mId + (inp.checked ? ' etkinleştirildi' : ' devre dışı bırakıldı'), 'ok');
+                showRebootBanner();
+                loadModuleList();
+              } else {
+                toast((res && res.err) || 'Hata', 'err');
+                inp.checked = wasEnabled; // revert on error
+              }
+            });
+          });
+        }(modId, enabled, nInp));
+        acts.appendChild(nWrap);
+
+        var delBtn = mkEl('button', 'btn sm danger', 'Kaldır');
+        (function (mId) {
+          delBtn.addEventListener('click', function () {
+            if (!confirm('"' + mId + '" modülünü kaldırmak istiyor musunuz?\nReboot sonrası silinecek.')) return;
+            api('mod_remove', mId).then(function (res) {
+              if (res && res.ok) {
+                toast(mId + ' kaldırma işaretlendi — reboot sonrası silinecek', 'ok', 5000);
+                showRebootBanner();
+                loadModuleList();
+              } else {
+                toast((res && res.err) || 'Kaldırma başarısız', 'err');
+              }
+            });
+          });
+        }(modId));
+        acts.appendChild(delBtn);
+      }
+
+      row.appendChild(acts);
+      el.appendChild(row);
+    });
+  }
+
+  async function loadModuleCatalog() {
+    var el   = document.getElementById('mod-catalog');
+    var pill = document.getElementById('mod-catalog-pill');
+    if (!el) return;
+    el.textContent = '';
+    el.appendChild(mkEl('div', 'empty', 'Yükleniyor…'));
+
+    var r = await api('mod_catalog');
+    el.textContent = '';
+
+    if (!r || r.ok !== true) {
+      if (pill) { pill.textContent = 'çevrimdışı'; pill.className = 'pill warn'; }
+      el.appendChild(mkEl('div', 'empty', 'Katalog şu an alınamadı — lütfen tekrar deneyin.'));
+      var retryBtn = mkEl('button', 'btn ghost sm', '↻ Tekrar Dene');
+      retryBtn.style.marginTop = '8px';
+      retryBtn.addEventListener('click', loadModuleCatalog);
+      el.appendChild(retryBtn);
+      return;
+    }
+
+    if (pill) { pill.className = 'pill hidden'; }
+
+    var catalog = r.catalog || [];
+    if (!catalog.length) {
+      el.appendChild(mkEl('div', 'empty', 'Katalogda modül yok'));
+      return;
+    }
+
+    catalog.forEach(function (item) {
+      var catId       = String(item.id              || '');
+      var catName     = String(item.name            || item.id || '?');
+      var catDesc     = item.description ? String(item.description) : '';
+      var catVer      = item.version ? String(item.version) : '';
+      var catInstalled= !!item.installed;
+      var catInstVer  = item.installedVersion ? String(item.installedVersion) : '';
+
+      var card   = mkEl('div', 'mod-cat-item');
+      var header = mkEl('div', 'mod-cat-header');
+
+      var nameEl = mkEl('span', 'mod-cat-name');
+      nameEl.textContent = catName;  // XSS-safe
+      header.appendChild(nameEl);
+
+      if (catInstalled) {
+        var badge = mkEl('span', 'pill ok');
+        // XSS-safe: catInstVer comes from server via textContent
+        badge.textContent = catInstVer ? 'kurulu v' + catInstVer : 'kurulu';
+        header.appendChild(badge);
+      } else {
+        var instBtn = mkEl('button', 'btn sm primary', 'Kur');
+        if (catVer) instBtn.title = 'v' + catVer;
+        (function (mId, mName, btn) {
+          btn.addEventListener('click', function () {
+            btn.disabled = true;
+            btn.textContent = 'kuruluyor…';
+            api('mod_install_catalog', mId).then(function (res) {
+              btn.disabled = false;
+              btn.textContent = 'Kur';
+              if (res && res.ok) {
+                var msg = mName + ' kuruldu';
+                if (res.reboot_required) { msg += ' — reboot gerekli'; }
+                toast(msg, 'ok', 6000);
+                if (res.reboot_required) showRebootBanner();
+                loadModuleCatalog();
+                loadModuleList();
+              } else {
+                toast((res && res.err) || (mName + ' kurulum başarısız'), 'err', 6000);
+              }
+            });
+          });
+        }(catId, catName, instBtn));
+        header.appendChild(instBtn);
+      }
+
+      card.appendChild(header);
+
+      if (catDesc) {
+        var descEl = mkEl('div', 'mod-cat-desc');
+        descEl.textContent = catDesc;  // XSS-safe
+        card.appendChild(descEl);
+      }
+
+      el.appendChild(card);
+    });
+  }
+
+  async function uploadModZip() {
+    var input  = document.getElementById('mod-zip-input');
+    var btn    = document.getElementById('mod-zip-btn');
+    var status = document.getElementById('mod-zip-status');
+
+    if (!input || !input.files || !input.files.length) {
+      toast('Önce bir zip dosyası seçin', 'err');
+      return;
+    }
+    var file     = input.files[0];
+    var origText = btn.textContent;
+
+    btn.disabled    = true;
+    btn.textContent = 'yükleniyor…';
+    if (status) { status.textContent = 'Dosya yükleniyor — lütfen bekleyin…'; status.classList.remove('hidden'); }
+
+    var res;
+    try {
+      var resp = await fetch('/cgi-bin/upload.cgi', {
+        method:      'POST',
+        body:        file,
+        credentials: 'same-origin'
+      });
+      var txt = await resp.text();
+      try { res = JSON.parse(txt); } catch (ep) { res = { err: txt || 'parse error' }; }
+    } catch (ef) {
+      res = { err: 'network error' };
+    }
+
+    btn.disabled    = false;
+    btn.textContent = origText;
+    if (status) { status.textContent = ''; status.classList.add('hidden'); }
+
+    // Treat any response where .ok !== true as an error
+    if (res && res.ok === true) {
+      var okMsg = 'Modül kuruldu';
+      if (res.reboot_required) { okMsg += ' — reboot gerekli'; }
+      toast(okMsg, 'ok', 6000);
+      if (res.reboot_required) showRebootBanner();
+      input.value = '';
+      loadModuleList();
+    } else {
+      var errMsg = (res && (res.err || res.error)) || 'Yükleme başarısız';
+      toast(errMsg, 'err', 6000);  // XSS-safe: textContent in toast()
+    }
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
