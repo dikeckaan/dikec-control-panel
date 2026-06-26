@@ -139,6 +139,27 @@ mod_install_catalog() {
     return $rc
 }
 
+# ── install any module from a direct https URL ────────────────────────────────
+# Lets the user install ANY module (not just catalog entries) by pasting a zip
+# URL — e.g. another project's GitHub release asset.
+mod_install_url() {
+    local url="$1"
+    case "$url" in
+        https://*) ;;
+        *) "$JQ" -nc '{err:"only-https-urls"}'; return 1 ;;
+    esac
+    local tmp
+    tmp=$(mktemp /data/local/tmp/modurl.XXXXXX 2>/dev/null) || tmp="/data/local/tmp/.modurl.$$"
+    mv "$tmp" "$tmp.zip" 2>/dev/null && tmp="$tmp.zip"
+    if ! "$CURL" -fsSL --cacert "$CA" --max-time 180 -o "$tmp" "$url" 2>/dev/null; then
+        rm -f "$tmp"; "$JQ" -nc '{err:"download-failed"}'; return 1
+    fi
+    mod_install_zip "$tmp"
+    local rc=$?
+    rm -f "$tmp"
+    return $rc
+}
+
 # ── install an arbitrary module zip ───────────────────────────────────────────
 mod_install_zip() {
     local zip="$1"

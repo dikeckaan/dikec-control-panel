@@ -255,6 +255,7 @@ case "$VERB" in
   mod_remove)          _o=$(mod_remove "$ARG"); j_rc $? "$_o";;
   mod_unremove)        _o=$(mod_unremove "$ARG"); j_rc $? "$_o";;
   mod_install_catalog) _o=$(mod_install_catalog "$ARG"); j_rc $? "$_o";;
+  mod_install_url)     _o=$(mod_install_url "$ARG"); j_rc $? "$_o";;
   mod_install_zip)     _o=$(mod_install_zip "$ARG"); j_rc $? "$_o";;
 
   # ── system reboot ─────────────────────────────────────────────────────────
