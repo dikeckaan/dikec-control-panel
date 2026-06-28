@@ -21,15 +21,24 @@ LOG="$DATA/logs/httpd.log" supervisor_loop "$MODDIR/www/start-httpd.sh" 15
 # Telegram bot — token + chat_id bekler (bot.sh kendi bekler)
 LOG="$DATA/logs/bot.log" supervisor_loop "$MODDIR/bot/bot.sh" 15
 
-# xray yalnızca kullanıcı etkinleştirmişse (route mode'a göre tun0/tproxy)
-if [ "$(cat "$DATA/conf/xray_enabled" 2>/dev/null)" = "1" ]; then
-    "$MODDIR/lib/action.sh" xray_start >> "$DATA/logs/service.log" 2>&1
-fi
+# xray ve adblock: cihaz başladığında iptables ve ağ kurallarının Android (netd)
+# tarafından ezilmesini önlemek için boot işleminin tamamlanmasını bekle.
+(
+    until [ "$(getprop sys.boot_completed)" = "1" ]; do
+        sleep 2
+    done
+    sleep 5
 
-# adblock: kullanıcı açık bıraktıysa boot'ta geri aç (on/off kararı kalıcı olsun)
-if [ "$(cat "$DATA/conf/adblock_enabled" 2>/dev/null)" = "1" ]; then
-    "$MODDIR/lib/action.sh" adblock_enable >> "$DATA/logs/service.log" 2>&1
-fi
+    # xray yalnızca kullanıcı etkinleştirmişse (route mode'a göre tun0/tproxy)
+    if [ "$(cat "$DATA/conf/xray_enabled" 2>/dev/null)" = "1" ]; then
+        "$MODDIR/lib/action.sh" xray_start >> "$DATA/logs/service.log" 2>&1
+    fi
+
+    # adblock: kullanıcı açık bıraktıysa boot'ta geri aç (on/off kararı kalıcı olsun)
+    if [ "$(cat "$DATA/conf/adblock_enabled" 2>/dev/null)" = "1" ]; then
+        "$MODDIR/lib/action.sh" adblock_enable >> "$DATA/logs/service.log" 2>&1
+    fi
+) &
 
 # Kullanıcının panel/bot'tan DURDURDUĞU entegrasyonlar (tor/ssh/tailscale) boot'ta
 # kendi modüllerince tekrar başlatılır; kullanıcının "durdur" kararı kalıcı olsun
