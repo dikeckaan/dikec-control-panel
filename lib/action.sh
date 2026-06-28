@@ -81,6 +81,7 @@ case "$VERB" in
   cellinfo)        j_ok "$(at_cellinfo_json)";;
   sms_list)        j_ok "$(sms_list_json "${ARG:-20}")";;
   airplane)        at_airplane "$ARG" && j_ok '{}' || j_err "airplane $ARG başarısız";;
+  imei_set)        at_imei_set "$ARG" && j_ok '{}' || j_err "IMEI değiştirme başarısız";;
 
   # ── SMS send / delete ──────────────────────────────────────────────────────
   sms_send)
@@ -161,6 +162,9 @@ case "$VERB" in
   prof_import_sub) _o=$(prof_import_sub "$ARG"); j_rc $? "$_o";;
   prof_probe)      _o=$(prof_probe "$ARG"); j_rc $? "$_o";;
   prof_probe_all)  j_ok "$(prof_probe_all)";;
+  prof_delete)     _o=$(prof_delete "$ARG"); j_rc $? "$_o";;
+  prof_get)        _o=$(prof_get "$ARG"); j_rc $? "$_o";;
+  prof_save)       _o=$(prof_save "$ARG" "$ARG2"); j_rc $? "$_o";;
 
   # ── xray engine ───────────────────────────────────────────────────────────
   xray_start)      xray_start && j_ok '{}' || j_err "xray_start başarısız";;

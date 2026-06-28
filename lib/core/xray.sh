@@ -29,6 +29,10 @@ HEV_CONF="${DCP_DATA:-/data/dikec}/xray/hev.yml"
 XRAY_LOG="${DCP_DATA:-/data/dikec}/logs/xray.log"
 HEV_LOG="${DCP_DATA:-/data/dikec}/logs/hev.log"
 SOCKS_PORT=10808
+WATCHDOG_PID="${DCP_DATA:-/data/dikec}/xray/watchdog.pid"
+WATCHDOG_INTERVAL=30
+WATCHDOG_MAX_FAILS=5
+WATCHDOG_COOLDOWN=300
 
 # ── hev config ────────────────────────────────────────────────────────────────
 
@@ -53,6 +57,102 @@ HEVEOF
 # Port 10808 = 0x2A38 (big-endian in proc format)
 _socks_listening() {
     grep -qiE "0100007F:2A38[[:space:]]" /proc/net/tcp 2>/dev/null
+}
+
+# ── watchdog ──────────────────────────────────────────────────────────────────
+# Background loop: her $WATCHDOG_INTERVAL saniyede xray (+ tun0 modunda hev)
+# PID'lerini ve socks port'u kontrol eder. Ölmüşse otomatik yeniden başlatır.
+# Üst üste $WATCHDOG_MAX_FAILS başarısız restart → $WATCHDOG_COOLDOWN bekle.
+# xray_stop çağrıldığında xray_enabled=0 olur → watchdog kendini sonlandırır.
+
+_xray_watchdog_stop() {
+    if [ -f "$WATCHDOG_PID" ]; then
+        local wpid
+        wpid=$(cat "$WATCHDOG_PID" 2>/dev/null)
+        if [ -n "$wpid" ] && kill -0 "$wpid" 2>/dev/null; then
+            kill "$wpid" 2>/dev/null || true
+        fi
+        rm -f "$WATCHDOG_PID"
+        dcp_log "watchdog: stopped (pid=${wpid:-?})"
+    fi
+}
+
+_xray_watchdog_start() {
+    # Önce mevcut watchdog'u durdur (tekil instance garantisi)
+    _xray_watchdog_stop
+
+    (
+        fails=0
+        while true; do
+            sleep "$WATCHDOG_INTERVAL"
+
+            # xray_enabled=0 → kullanıcı xray_stop çağırdı, çık
+            [ "$(cfg_get xray_enabled 0)" = "1" ] || {
+                dcp_log "watchdog: xray_enabled=0, exiting"
+                rm -f "$WATCHDOG_PID"
+                exit 0
+            }
+
+            alive=true
+
+            # 1) xray PID kontrolü
+            xpid=""
+            [ -f "$XRAY_PID" ] && xpid=$(cat "$XRAY_PID" 2>/dev/null)
+            if [ -z "$xpid" ] || ! kill -0 "$xpid" 2>/dev/null; then
+                dcp_log "watchdog: xray process dead (pid=${xpid:-?})"
+                alive=false
+            fi
+
+            # 2) tun0 modunda hev PID kontrolü
+            if $alive && [ "$(cfg_get route_mode tun0)" = "tun0" ]; then
+                hpid=""
+                [ -f "$HEV_PID" ] && hpid=$(cat "$HEV_PID" 2>/dev/null)
+                if [ -z "$hpid" ] || ! kill -0 "$hpid" 2>/dev/null; then
+                    dcp_log "watchdog: hev process dead (pid=${hpid:-?})"
+                    alive=false
+                fi
+            fi
+
+            # 3) Socks port health check (process hayatta ama port kapanmış olabilir)
+            if $alive && ! _socks_listening; then
+                dcp_log "watchdog: socks port 10808 not listening (xray hung?)"
+                alive=false
+            fi
+
+            # Herşey yolunda → sayacı sıfırla
+            if $alive; then
+                fails=0
+                continue
+            fi
+
+            # Sorun var → restart
+            fails=$((fails + 1))
+            if [ "$fails" -gt "$WATCHDOG_MAX_FAILS" ]; then
+                dcp_log "watchdog: $fails consecutive fails, cooldown ${WATCHDOG_COOLDOWN}s"
+                sleep "$WATCHDOG_COOLDOWN"
+                fails=0
+            fi
+
+            dcp_log "watchdog: restarting xray (attempt #$fails)"
+            # _WATCHDOG_RESTART flag: xray_stop/xray_start watchdog'u tekrar
+            # başlatıp/durdurup sonsuz döngü oluşturmasın
+            _WATCHDOG_RESTART=1
+            export _WATCHDOG_RESTART
+            xray_stop 2>/dev/null || true
+            # xray_stop xray_enabled=0 yapar, geri aç
+            cfg_set xray_enabled 1
+            sleep 2
+            if xray_start 2>/dev/null; then
+                dcp_log "watchdog: restart successful"
+                fails=0
+            else
+                dcp_log "watchdog: restart failed"
+            fi
+            unset _WATCHDOG_RESTART
+        done
+    ) >> "${DCP_DATA:-/data/dikec}/logs/xray.log" 2>&1 &
+    echo $! > "$WATCHDOG_PID"
+    dcp_log "watchdog: started (pid=$!, interval=${WATCHDOG_INTERVAL}s)"
 }
 
 # ── xray_start ───────────────────────────────────────────────────────────────
@@ -133,6 +233,11 @@ xray_start() {
 
     cfg_set xray_enabled 1
     dcp_log "xray_start: done mode=$mode"
+
+    # Watchdog başlat (sadece doğrudan çağrılarda, watchdog restart'ından değil)
+    if [ -z "${_WATCHDOG_RESTART:-}" ]; then
+        _xray_watchdog_start
+    fi
 }
 
 # ── xray_stop ─────────────────────────────────────────────────────────────────
@@ -141,6 +246,11 @@ xray_stop() {
     local mode
     mode=$(cfg_get route_mode tun0)
     dcp_log "xray_stop: mode=$mode"
+
+    # Watchdog'u durdur (sadece doğrudan çağrılarda, watchdog restart'ından değil)
+    if [ -z "${_WATCHDOG_RESTART:-}" ]; then
+        _xray_watchdog_stop
+    fi
 
     # ── 1) Clear routing first ───────────────────────────────────────────────
     # This removes ip rules/routes and removes tun0 from rt_tables,
