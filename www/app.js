@@ -311,6 +311,8 @@
   function switchTab(id) {
     clearTimeout(_pollT);
     activeTab = id;
+    try { history.replaceState(null, '', '#' + id); } catch (e) {}
+    try { localStorage.setItem('dcp_active_tab', id); } catch (e) {}
 
     // Update sidebar active state
     TABS.forEach(function (t) {
@@ -413,9 +415,11 @@
     // Init mobile drawer
     initDrawer();
 
-    // Load initial tab — honour URL hash for direct linking / bookmarks
+    // Load initial tab — honour URL hash for direct linking / bookmarks, fallback to localStorage
     var hash = location.hash.replace(/^#/, '').replace(/\?.*$/, '');
-    var initialTab = (TABS.indexOf(hash) !== -1) ? hash : 'dash';
+    var saved = '';
+    try { saved = localStorage.getItem('dcp_active_tab'); } catch (e) {}
+    var initialTab = (TABS.indexOf(hash) !== -1) ? hash : ((TABS.indexOf(saved) !== -1) ? saved : 'dash');
     switchTab(initialTab);
   }
 
