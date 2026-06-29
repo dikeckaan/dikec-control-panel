@@ -311,6 +311,8 @@
   function switchTab(id) {
     clearTimeout(_pollT);
     activeTab = id;
+    try { history.replaceState(null, '', '#' + id); } catch (e) {}
+    try { localStorage.setItem('dcp_active_tab', id); } catch (e) {}
 
     // Update sidebar active state
     TABS.forEach(function (t) {
@@ -413,9 +415,11 @@
     // Init mobile drawer
     initDrawer();
 
-    // Load initial tab — honour URL hash for direct linking / bookmarks
+    // Load initial tab — honour URL hash for direct linking / bookmarks, fallback to localStorage
     var hash = location.hash.replace(/^#/, '').replace(/\?.*$/, '');
-    var initialTab = (TABS.indexOf(hash) !== -1) ? hash : 'dash';
+    var saved = '';
+    try { saved = localStorage.getItem('dcp_active_tab'); } catch (e) {}
+    var initialTab = (TABS.indexOf(hash) !== -1) ? hash : ((TABS.indexOf(saved) !== -1) ? saved : 'dash');
     switchTab(initialTab);
   }
 
@@ -527,6 +531,17 @@
         '<div id="prof-list"></div>',
         '<div id="probe-results"></div>',
       '</div>',
+      '<div class="card hidden" id="prof-edit-card">',
+        '<h3>Edit Profile: <span id="prof-edit-name"></span></h3>',
+        '<div class="field">',
+          '<label for="prof-edit-input">Xray Configuration (JSON)</label>',
+          '<textarea id="prof-edit-input" class="code" spellcheck="false" style="height:250px"></textarea>',
+        '</div>',
+        '<div class="row">',
+          '<button class="btn primary sm" id="prof-save-btn">Save</button>',
+          '<button class="btn ghost sm" id="prof-cancel-btn">Cancel</button>',
+        '</div>',
+      '</div>',
       '<div class="card">',
         '<h3>Import Link / Subscription</h3>',
         '<div class="field">',
@@ -549,6 +564,8 @@
     document.getElementById('prof-probe').addEventListener('click',  probeSpeeds);
     document.getElementById('prof-refresh').addEventListener('click',loadProfiles);
     document.getElementById('import-btn').addEventListener('click',  doImport);
+    document.getElementById('prof-save-btn').addEventListener('click', saveProfile);
+    document.getElementById('prof-cancel-btn').addEventListener('click', cancelEditProfile);
   }
 
   async function loadXray() {
@@ -617,6 +634,18 @@
         }(p.name));
         item.appendChild(sw);
       }
+      var ed = mkEl('button', 'btn sm ghost', 'Edit');
+      (function (name) {
+        ed.addEventListener('click', function () { editProfile(name); });
+      }(p.name));
+      item.appendChild(ed);
+
+      var del = mkEl('button', 'btn sm danger', 'Delete');
+      (function (name) {
+        del.addEventListener('click', function () { deleteProfile(name); });
+      }(p.name));
+      item.appendChild(del);
+
       el.appendChild(item);
     });
   }
@@ -628,6 +657,63 @@
       loadProfiles();
     } else {
       toast((r && r.err) || 'Switch failed', 'err');
+    }
+  }
+
+  async function editProfile(name) {
+    var r = await api('prof_get', name);
+    if (r && r.ok) {
+      var card = document.getElementById('prof-edit-card');
+      var nameSpan = document.getElementById('prof-edit-name');
+      var input = document.getElementById('prof-edit-input');
+      if (card && nameSpan && input) {
+        nameSpan.textContent = name;
+        input.value = r.config || '';
+        card.classList.remove('hidden');
+        card.scrollIntoView({ behavior: 'smooth' });
+      }
+    } else {
+      toast((r && r.err) || 'Failed to get profile config', 'err');
+    }
+  }
+
+  function cancelEditProfile() {
+    var card = document.getElementById('prof-edit-card');
+    if (card) card.classList.add('hidden');
+    var input = document.getElementById('prof-edit-input');
+    if (input) input.value = '';
+  }
+
+  async function saveProfile() {
+    var nameSpan = document.getElementById('prof-edit-name');
+    var input = document.getElementById('prof-edit-input');
+    if (!nameSpan || !input) return;
+    var name = nameSpan.textContent;
+    var content = input.value;
+    if (!name || !content) return;
+
+    var r = await apiPost('prof_save', name, content);
+    if (r && r.ok) {
+      toast('Saved profile ' + name, 'ok');
+      cancelEditProfile();
+      loadProfiles();
+    } else {
+      toast((r && r.err) || 'Failed to save profile (xray -test failed?)', 'err');
+    }
+  }
+
+  async function deleteProfile(name) {
+    if (!confirm('Are you sure you want to delete profile: ' + name + '?')) return;
+    var r = await api('prof_delete', name);
+    if (r && r.ok) {
+      toast('Deleted profile ' + name, 'ok');
+      var nameSpan = document.getElementById('prof-edit-name');
+      if (nameSpan && nameSpan.textContent === name) {
+        cancelEditProfile();
+      }
+      loadProfiles();
+    } else {
+      toast((r && r.err) || 'Failed to delete profile', 'err');
     }
   }
 
@@ -886,7 +972,18 @@
         '<div class="card"><h3>Signal</h3><div id="cell-sig-kvs"></div></div>',
         '<div class="card"><h3>Cell Info</h3><div id="cell-info-kvs"></div></div>',
       '</div>',
+      '<div class="card">',
+        '<h3>IMEI Değiştirme (Unisoc)</h3>',
+        '<p class="hint" style="margin-top:0">15 haneli yeni IMEI numarasını girin. Değişiklik Unisoc (Spreadtrum) modemine AT komutları ile yazılacaktır.</p>',
+        '<div class="row" style="align-items:center;gap:10px;flex-wrap:wrap">',
+          '<input type="text" id="imei-input" placeholder="123456789012345" maxlength="15" style="flex:1;min-width:160px">',
+          '<button class="btn primary sm" id="imei-btn">IMEI Yaz</button>',
+        '</div>',
+        '<p class="hint">İşlemden sonra yeni IMEI\'nin geçerli olması için cihazı yeniden başlatmanız (Reboot) gerekebilir.</p>',
+      '</div>',
     ].join('');
+
+    document.getElementById('imei-btn').addEventListener('click', changeImei);
   }
 
   async function loadCellular() {
@@ -925,6 +1022,26 @@
     }
 
     sched(loadCellular, 5000);
+  }
+
+  async function changeImei() {
+    var inp = document.getElementById('imei-input');
+    var imei = (inp && inp.value || '').trim();
+    if (!imei || imei.length !== 15 || !/^\d{15}$/.test(imei)) {
+      toast('15 haneli geçerli bir IMEI numarası girin', 'err');
+      return;
+    }
+    var btn = document.getElementById('imei-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Yazılıyor…'; }
+    var r = await api('imei_set', imei);
+    if (btn) { btn.disabled = false; btn.textContent = 'IMEI Yaz'; }
+    if (r && r.ok) {
+      toast('IMEI başarıyla yazıldı. Lütfen cihazı yeniden başlatın (Reboot).', 'ok', 5000);
+      if (inp) inp.value = '';
+      loadCellular();
+    } else {
+      toast((r && r.err) || 'IMEI değiştirme başarısız', 'err');
+    }
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════

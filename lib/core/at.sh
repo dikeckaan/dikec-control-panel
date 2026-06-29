@@ -101,3 +101,17 @@ at_airplane(){
         off) at_raw 'AT+CFUN=1';;
     esac
 }
+
+# at_imei_set <yeni_imei> — Unisoc (Spreadtrum) modemler için IMEI yazma komutları
+at_imei_set(){
+    local imei="${1:-}"
+    [ -n "$imei" ] || return 1
+    # 15 haneli rakam kontrolü
+    case "$imei" in
+        *[!0-9]*) return 1;;
+    esac
+    [ "${#imei}" -eq 15 ] || return 1
+    at_raw "AT+SPIMEI=0,\"$imei\""
+
+    return 0
+}

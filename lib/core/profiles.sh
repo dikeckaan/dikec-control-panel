@@ -497,3 +497,58 @@ prof_probe_all() {
         '{results: ($r | sort_by(if .ok then .latency_ms else 9999999 end)),
           fastest: ([$r[] | select(.ok)] | sort_by(.latency_ms) | (.[0].name // null))}'
 }
+
+# ── prof_delete ───────────────────────────────────────────────────────────────
+
+prof_delete() {
+    local name="${1:-}"
+    [ -n "$name" ] || { "$JQ" -nc --arg e "name-empty" '{err:$e}'; return 1; }
+    _prof_valid_name "$name" || { "$JQ" -nc --arg e "invalid-name" '{err:$e}'; return 1; }
+    local pfile="$PROF_DIR/config-${name}.json"
+    [ -f "$pfile" ] || { "$JQ" -nc --arg e "profile-not-found" '{err:$e}'; return 1; }
+    rm -f "$pfile"
+    if [ "$name" = "$(prof_active)" ]; then
+        rm -f "$ACTIVE_FILE"
+    fi
+    "$JQ" -nc --arg name "$name" '{ok:true, deleted:$name}'
+}
+
+# ── prof_get ──────────────────────────────────────────────────────────────────
+
+prof_get() {
+    local name="${1:-}"
+    [ -n "$name" ] || { "$JQ" -nc --arg e "name-empty" '{err:$e}'; return 1; }
+    _prof_valid_name "$name" || { "$JQ" -nc --arg e "invalid-name" '{err:$e}'; return 1; }
+    local pfile="$PROF_DIR/config-${name}.json"
+    [ -f "$pfile" ] || { "$JQ" -nc --arg e "profile-not-found" '{err:$e}'; return 1; }
+    local content
+    content=$(cat "$pfile" 2>/dev/null)
+    "$JQ" -nc --arg name "$name" --arg config "$content" '{ok:true, name:$name, config:$config}'
+}
+
+# ── prof_save ─────────────────────────────────────────────────────────────────
+
+prof_save() {
+    local name="${1:-}"
+    local content="${2:-}"
+    [ -n "$name" ] || { "$JQ" -nc --arg e "name-empty" '{err:$e}'; return 1; }
+    _prof_valid_name "$name" || { "$JQ" -nc --arg e "invalid-name" '{err:$e}'; return 1; }
+    local pfile="$PROF_DIR/config-${name}.json"
+    [ -f "$pfile" ] || { "$JQ" -nc --arg e "profile-not-found" '{err:$e}'; return 1; }
+    [ -n "$content" ] || { "$JQ" -nc --arg e "content-empty" '{err:$e}'; return 1; }
+
+    mkdir -p "$PROF_DIR"
+    local tmp_cfg="${PROF_DIR}/.tmp$$.json"
+    printf '%s\n' "$content" > "$tmp_cfg"
+
+    if ! "$XRAY_BIN" run -test -config "$tmp_cfg" >/dev/null 2>&1; then
+        rm -f "$tmp_cfg"
+        "$JQ" -nc --arg e "xray-test-failed" '{err:$e}'; return 1
+    fi
+
+    mv "$tmp_cfg" "$pfile"
+    if [ "$name" = "$(prof_active)" ]; then
+        cp "$pfile" "$DCP_DATA/xray/config.json"
+    fi
+    "$JQ" -nc --arg name "$name" '{ok:true, saved:$name}'
+}

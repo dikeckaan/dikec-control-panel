@@ -2415,27 +2415,9 @@ cmd_wifi() {
 }
 
 cmd_sms_send() {
-    local chat_id="$1"
-    local args="$2"
-    # Parse: first word = number, rest = message
-    local num msg
-    num=$(first_word "$args")
-    msg=$(rest_args "$args")
-    if [ -z "$num" ] || [ -z "$msg" ]; then
-        tg_send "$chat_id" "${MSG[sms_usage]}"
-        return
-    fi
-    if [ ! -x "$SENDAT" ]; then
-        tg_send "$chat_id" "${MSG[sms_no_sendat]}"
-        return
-    fi
-    "$SENDAT" -c "AT+CMGF=1" -n 0 >/dev/null 2>&1
-    local resp
-    resp=$(printf 'AT+CMGS="%s"\r\n%s\x1A' "$num" "$msg" | xargs -0 -I{} "$SENDAT" -c "{}" -n 0 2>&1)
-    case "$resp" in
-        *OK*|*CMGS:*) tg_send "$chat_id" "$(printf "${MSG[sms_sent_fmt]}" "$num" "$msg")" ;;
-        *)            tg_send "$chat_id" "$(printf "${MSG[sms_failed_fmt]}" "$resp")" ;;
-    esac
+    # Eski AT+CMGS inline kodu kaldırıldı (Unisoc'ta çalışmıyordu).
+    # Tüm SMS gönderimi artık action.sh → sms.sh fallback zinciri üzerinden.
+    cmd_sms_send_action "$1" "$2"
 }
 
 # ─── ZTE goform API (performance mode etc.) ──────────────────────────────
